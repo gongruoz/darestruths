@@ -228,11 +228,19 @@ section h2 { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
 `);
 });
 
-app.get("/", async (_, res) => {
+app.get("/", async (req, res) => {
+  // #region agent log
+  fetch("http://127.0.0.1:7415/ingest/d5903de1-1d40-449c-a008-8e78e3d514a5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "1d20f9" }, body: JSON.stringify({ sessionId: "1d20f9", location: "server.js:GET/", message: "GET / route hit", data: { url: req.url }, hypothesisId: "H5", timestamp: Date.now() }) }).catch(() => {});
+  // #endregion
   const data = await fetchNotionContent();
   res.type("html").send(buildHtml(data));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server at http://localhost:${PORT}`);
-});
+// Only start HTTP server when not on Vercel (serverless invokes the app per request)
+if (process.env.VERCEL !== "1") {
+  app.listen(PORT, () => {
+    console.log(`Server at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
