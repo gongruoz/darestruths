@@ -24,4 +24,5 @@ node test-connection.js
 
 ## Env
 
-- `.env` must include `NOTION_TOKEN=...` (from your Notion integration).
+- **Local:** `.env` must include `NOTION_TOKEN=...` (from your Notion integration).
+- **Vercel:** Add the same variable in the dashboard: Project → **Settings** → **Environment Variables** → add `NOTION_TOKEN` with your integration token → **Redeploy**.

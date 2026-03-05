@@ -31,6 +31,17 @@ function blockToHtml(block) {
   const content = block[type];
   if (!content) return "";
 
+  // Notion 图像：external URL 或 file URL
+  if (type === "image") {
+    // #region agent log
+    try { fetch("http://127.0.0.1:7415/ingest/d5903de1-1d40-449c-a008-8e78e3d514a5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "1d20f9" }, body: JSON.stringify({ sessionId: "1d20f9", location: "server.js:blockToHtml:image", message: "image block", data: { hasExternal: !!content.external, hasFile: !!content.file, urlFromExternal: !!content.external?.url, urlFromFile: !!content.file?.url, keys: Object.keys(content) }, hypothesisId: "H3", timestamp: Date.now() }) }); } catch (_) {}
+    // #endregion
+    const url = content.external?.url || content.file?.url;
+    if (!url) return "";
+    const alt = getPlainText(content.caption) || "Image";
+    return `<figure class="notion-image"><img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" loading="lazy" /></figure>`;
+  }
+
   const rich = content.rich_text || content.caption;
   const text = getPlainText(rich);
   if (!text.trim()) return "";
@@ -84,6 +95,20 @@ async function getBlockChildren(blockId) {
   return blocks;
 }
 
+/** 递归获取所有子块（含 column_list 等内部的 image），保持文档顺序 */
+async function getAllBlocksFlat(blockId) {
+  const top = await getBlockChildren(blockId);
+  const out = [];
+  for (const block of top) {
+    out.push(block);
+    if (block.has_children) {
+      const nested = await getAllBlocksFlat(block.id);
+      out.push(...nested);
+    }
+  }
+  return out;
+}
+
 function getPageTitleFromProps(properties) {
   if (!properties) return "Untitled";
   const prop = properties.title || properties.Name || properties.name;
@@ -101,8 +126,38 @@ async function fetchAsPage(pageId) {
     const titleProp = Object.values(page.properties || {}).find((p) => p.type === "title");
     out.databaseTitle =
       (titleProp && getPlainText(titleProp.title || titleProp.rich_text)) || "Home";
-    const blocks = await getBlockChildren(pageId);
-    let html = blocks.map(blockToHtml).filter(Boolean).join("\n");
+    const blocks = await getAllBlocksFlat(pageId);
+    // #region agent log
+    const _dbg = (msg, data) => { try { fetch("http://127.0.0.1:7415/ingest/d5903de1-1d40-449c-a008-8e78e3d514a5", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "1d20f9" }, body: JSON.stringify({ sessionId: "1d20f9", location: "server.js:fetchAsPage", message: msg, data: data || {}, hypothesisId: "H1", timestamp: Date.now() }) }); } catch (_) {} };
+    _dbg("block types (with nested)", { types: blocks.map(b => b.type), imageCount: blocks.filter(b => b.type === "image").length });
+    blocks.filter(b => b.type === "image").forEach((b, i) => { const c = b.image || {}; _dbg("image block structure", { index: i, contentKeys: Object.keys(c), externalUrl: c.external?.url ? "(present)" : null, fileUrl: c.file?.url ? "(present)" : null, raw: JSON.stringify(c).slice(0, 300) }); });
+    // #endregion
+    let html = "";
+    let idx = 0;
+    while (idx < blocks.length) {
+      const part = blockToHtml(blocks[idx]);
+      if (!part) { idx++; continue; }
+      if (blocks[idx].type === "image") {
+        let row = part;
+        let j = idx + 1;
+        while (j < blocks.length) {
+          if (blocks[j].type === "image") {
+            row += blockToHtml(blocks[j]);
+            j++;
+          } else if (blocks[j].type === "column_list" || blocks[j].type === "column") {
+            j++;
+          } else {
+            break;
+          }
+        }
+        html += `<div class="image-row">${row}</div>`;
+        idx = j;
+        continue;
+      } else {
+        html += part + "\n";
+      }
+      idx++;
+    }
     if (blocks.some((b) => b.type === "bulleted_list_item" || b.type === "numbered_list_item")) {
       html = html.replace(/(<li>.*?<\/li>)+/gs, (match) => `<ul>${match}</ul>`);
     }
@@ -155,8 +210,23 @@ function buildHtml(data) {
     (data.error.includes("Could not find") ||
       data.error.includes("object_not_found") ||
       data.error.includes("relevant pages and databases are shared"));
+  const isTokenError =
+    data.error &&
+    (data.error.toLowerCase().includes("token") ||
+      data.error.toLowerCase().includes("invalid") ||
+      data.error.toLowerCase().includes("unauthorized") ||
+      data.error.toLowerCase().includes("authorization"));
   const errorHtml = data.error
-    ? isNotionError
+    ? isTokenError
+      ? `<div class="error-box">
+          <p class="error">${escapeHtml(data.error)}</p>
+          <p><strong>Fix (e.g. on Vercel) / 解决方法：</strong></p>
+          <ol>
+            <li>Add <strong>NOTION_TOKEN</strong> in your host’s environment (e.g. Vercel → Project → Settings → Environment Variables). 在部署平台（如 Vercel）的项目设置里添加环境变量 <strong>NOTION_TOKEN</strong>。</li>
+            <li>Redeploy after saving. 保存后重新部署。</li>
+          </ol>
+        </div>`
+      : isNotionError
       ? `<div class="error-box">
           <p class="error">${escapeHtml(data.error)}</p>
           <p><strong>Fix / 解决方法：</strong></p>
@@ -204,27 +274,38 @@ body {
   color: #111;
   font-family: system-ui, -apple-system, sans-serif;
   line-height: 1.6;
-  padding: 2rem;
-  max-width: 52rem;
+  padding: 3rem 2.5rem 4rem;
+  max-width: 56rem;
   margin-left: auto;
   margin-right: auto;
 }
-main h1 { font-size: 1.75rem; font-weight: 600; margin-bottom: 2rem; }
+main {
+  padding-top: 10rem;
+}
+main h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin-top: 0;
+  margin-bottom: 3rem;
+}
 a { color: #111; text-decoration: underline; }
 a:hover { text-decoration: none; }
-section { margin-bottom: 2.5rem; }
-section h2 { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
-.content p { margin: 0.5rem 0; }
-.content ul { margin: 0.5rem 0; padding-left: 1.25rem; }
-.content li { margin: 0.25rem 0; }
-.content blockquote { margin: 0.5rem 0; padding-left: 1rem; border-left: 2px solid #ccc; color: #333; }
-.content pre { overflow: auto; padding: 0.75rem; background: #f5f5f5; font-size: 0.875rem; }
-.content .todo { display: flex; align-items: center; gap: 0.5rem; }
+section { margin-bottom: 4rem; }
+section h2 { font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem; margin-top: 0; }
+.content p { margin: 0.85rem 0; }
+.content ul { margin: 0.85rem 0; padding-left: 1.5rem; }
+.content li { margin: 0.4rem 0; }
+.content blockquote { margin: 1rem 0; padding: 0.5rem 0 0.5rem 1.25rem; border-left: 2px solid #ccc; color: #333; }
+.content pre { overflow: auto; padding: 1rem; background: #f5f5f5; font-size: 0.875rem; margin: 1rem 0; }
+.content .todo { display: flex; align-items: center; gap: 0.6rem; }
 .content .todo input { margin: 0; }
 .error { color: #c00; }
-.error-box { margin-top: 1rem; padding: 1rem; border: 1px solid #ccc; background: #fafafa; }
-.error-box ol { margin: 0.5rem 0; padding-left: 1.5rem; }
-.error-box li { margin: 0.35rem 0; }
+.error-box { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid #ccc; background: #fafafa; }
+.error-box ol { margin: 0.6rem 0; padding-left: 1.5rem; }
+.error-box li { margin: 0.4rem 0; }
+.image-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 1.25rem; margin: 1.5rem 0; }
+.image-row figure.notion-image { margin: 0; flex: 0 0 auto; width: 45%; max-width: 280px; }
+figure.notion-image img { max-width: 100%; height: auto; display: block; }
 `);
 });
 
