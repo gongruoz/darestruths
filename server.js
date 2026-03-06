@@ -272,7 +272,8 @@ body {
   margin: 0;
   background: #fff;
   color: #111;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: "PingFang SC", -apple-system, sans-serif;
+  font-weight: 100;
   line-height: 1.6;
   padding: 3rem 2.5rem 4rem;
   max-width: 56rem;
@@ -284,14 +285,14 @@ main {
 }
 main h1 {
   font-size: 1.75rem;
-  font-weight: 600;
+  font-weight: 100;
   margin-top: 0;
   margin-bottom: 3rem;
 }
 a { color: #111; text-decoration: underline; }
 a:hover { text-decoration: none; }
 section { margin-bottom: 4rem; }
-section h2 { font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem; margin-top: 0; }
+section h2 { font-size: 1.125rem; font-weight: 100; margin-bottom: 1rem; margin-top: 0; }
 .content p { margin: 0.85rem 0; }
 .content ul { margin: 0.85rem 0; padding-left: 1.5rem; }
 .content li { margin: 0.4rem 0; }
